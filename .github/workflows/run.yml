@@ -1,0 +1,77 @@
+name: Generate, Sign, and Commit SBOM
+#harmlesscomment
+on:
+  push:
+
+jobs:
+  generate-and-sign-sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM in SPDX format
+        run: |
+          syft . -o spdx-json=log4shell-vulnerable-app-SPDX.json
+
+      - name: Upload SBOM as an artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: SBOM
+          path: log4shell-vulnerable-app-SPDX.json
+
+      - name: Install Cosign
+        run: |
+          COSIGN_VERSION="v2.2.3"
+          wget https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64 -O cosign
+          chmod +x cosign
+          sudo mv cosign /usr/local/bin/
+
+      - name: Sign the SBOM and generate certificate
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign-blob --oidc-issuer="https://token.actions.githubusercontent.com" \
+          --yes \
+          --output-signature log4shell-vulnerable-app-SPDX.json.sig \
+          --output-certificate log4shell-vulnerable-app-SPDX.pem \
+          log4shell-vulnerable-app-SPDX.json
+
+      - name: Commit SBOM, Signature, and Certificate to repository
+        run: |
+          git config --local user.email "<your_email@example.com>"
+          git config --local user.name "<Your GitHub Username>"
+          git add log4shell-vulnerable-app-SPDX.json log4shell-vulnerable-app-SPDX.json.sig log4shell-vulnerable-app-SPDX.pem
+          git commit -m "Add and Sign SBOM for log4shell-vulnerable-app"
+          git push
+
+  vulnerability-analysis:
+    needs: generate-and-sign-sbom
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: SBOM
+
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run vulnerability analysis
+        run: |
+          grype db update
+          grype sbom:log4shell-vulnerable-app-SPDX.json -o table
+          grype sbom:log4shell-vulnerable-app-SPDX.json
