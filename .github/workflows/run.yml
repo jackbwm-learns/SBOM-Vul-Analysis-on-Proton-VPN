@@ -1,5 +1,5 @@
 name: Generate, Sign, and Commit SBOM
-
+# test
 on:
   push:
 
